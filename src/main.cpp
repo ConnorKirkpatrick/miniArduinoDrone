@@ -1,81 +1,92 @@
 #include "Arduino.h"
-#include <Kalman.h> // Source: https://github.com/TKJElectronics/KalmanFilter
+#include "Kalman.h"
+#include "Adafruit_MotorShield.h"
 
 
-#include "setupGyro.h"
+#include "gyro.h"
+#include "barometer.h"
+#include "compass.h"
+#include "kalmanFilters.h"
 
-#define RESTRICT_PITCH // Comment out to restrict roll to ±90deg instead - please read: http://www.freescale.com/files/sensors/doc/app_note/AN3461.pdf
-
-Kalman kalmanX; // Create the Kalman instances
-Kalman kalmanY;
 
 /* IMU Data */
-double accX, accY, accZ;
-int16_t tempRaw;
-
-double gyroXangle, gyroYangle; // Angle calculate using the gyro only
-double compAngleX, compAngleY; // Calculated angle using a complementary filter
-double kalAngleX, kalAngleY; // Calculated angle using a Kalman filter
-
 uint32_t timer;
-uint8_t i2cData[14]; // Buffer for I2C data
 
+
+float dist = 0;
+float distR = 0;
+float speed = 0;
+float speedR = 0;
 // TODO: Make calibration routine
 float lateralOffset = 0;
 float directionalOffset = 0;
+
+Adafruit_MotorShield AFMS = Adafruit_MotorShield();
+Adafruit_DCMotor *myMotor = AFMS.getMotor(1);
 void setup() {
   Serial.begin(115200);
-  delay(1000);// Wait for sensor to stabilize
-  startGyro();
+  //
+  /*
+  if (!AFMS.begin()) {         // create with the default frequency 1.6KHz
+                       // if (!AFMS.begin(1000)) {  // OR with a different frequency, say 1KHz
+    Serial.println("Could not find Motor Shield. Check wiring.");
+    while (1);
+  }
+  Serial.println("Motor Shield found.");
+  myMotor->setSpeed(10);
+  myMotor->run(FORWARD);
+  delay(1000);
+  myMotor->setSpeed(0);
+  /*
+  ///P is 40, R is 75, expecting about 3m/s and 6m/s
+  double A1 = acos(cos(DegreestoRads(75))*cos(DegreestoRads(90)));
+  double A2 = atan((cos(DegreestoRads(75)) * sin(DegreestoRads(90)))/(sin(DegreestoRads(75))));
+  Serial.print("Adjust:");
+  Serial.print(A1,7);
+  Serial.print(" Adjust:");
+  Serial.print(A2,7);
+  //A1 and A2 bring the vector back to the baseline axis, correcting for any rotation. From here we calculate the vertical component
+  Serial.print(" Check:");
+  Serial.print(sin(0.5*PI - cos(A1))*9.81,7);
 
+  //A1 and A2 bring the vector back to the base line axis, correcting for any rotation. thus
+  Serial.print(" Check:");
+  Serial.println(9.81 - sin(0.5*PI - cos(A2))*9.81,7);
+  /*
+  double pOffset = cos(DegreestoRads(90-A1)) * 9.81;
+  double rOffset = cos(DegreestoRads(90-A2)) * 9.81;
+  Serial.print("Ang:");
+  Serial.print(currentAttitude.pitch);
+  Serial.print(" Offset:");
+  Serial.print(rOffset);
+  Serial.print(" Raw:");
+  Serial.print(currentAttitude.AccX)
+  */
+
+  delay(1000);// Wait for sensor to stabilize
+  Serial.println("SYSTEM STARTED");
+  //startBMP();
+  startGyro();
+  //startCompass();
   ///Set kalman and gyro starting angle
-  getData(0);
-  kalmanX.setAngle(currentAttitude.pitch); // Set starting angle
-  kalmanY.setAngle(currentAttitude.roll);
-  gyroXangle = currentAttitude.pitch;
-  gyroYangle = currentAttitude.roll;
+  getGyroData(false);
+  setupFilters(currentAttitude);
   timer = micros();
+
+
 }
 
 void loop() {
-  /* Update all the values */
+  /*
+  ///Update all the values
   double dt = (double)(micros() - timer) / 1000000; // Calculate delta time
   timer = micros();
-  currentAttitude = getData(0);
-
-  ///Kalman filter for pitch
-  if ((currentAttitude.pitch < -90 && kalAngleX > 90) || (currentAttitude.pitch > 90 && kalAngleX < -90)) {
-    kalmanX.setAngle(currentAttitude.pitch);
-    kalAngleX = currentAttitude.pitch;
-    gyroXangle = currentAttitude.pitch;
-  } else {
-    kalAngleX = kalmanX.getAngle(
-        currentAttitude.pitch, currentAttitude.RAccY, dt); // Calculate the angle using a Kalman filter
-  }
-  if (abs(kalAngleX) > 90)
-    currentAttitude.RAccY = -currentAttitude.RAccY; // Invert rate, so it fits the restricted accelerometer reading
-
-  ///Kalman filter for Roll
-  // This fixes the transition problem when the accelerometer angle jumps between -180 and 180 degrees
-  if ((currentAttitude.roll < -90 && kalAngleY > 90) || (currentAttitude.roll > 90 && kalAngleY < -90)) {
-    kalmanY.setAngle(currentAttitude.roll);
-    kalAngleY = currentAttitude.roll;
-    gyroYangle = currentAttitude.roll;
-  } else{
-    kalAngleY = kalmanY.getAngle(currentAttitude.roll, currentAttitude.RAccX, dt); // Calculate the angle using a Kalman filter
-  }
-  if (abs(kalAngleX) > 90)
-    currentAttitude.RAccX = -currentAttitude.RAccX; // Invert rate, so it fits the restricted accelerometer reading
-
-  /*lateralOffset = lateralOffset + (currentAttitude.AccX*dt);
-  directionalOffset = directionalOffset + (currentAttitude.AccY*dt);
-  Serial.print("LateralOffset:");
-  Serial.print(lateralOffset);
-  Serial.print(",");
-  Serial.print("DirectionalOffset:");
-  Serial.print(directionalOffset);
-   */
-
+  currentAttitude = getGyroData(0);
+  kalmanUpdate(currentAttitude, dt);
+  speedR = speedR + currentAttitude.AccX * dt;
+  speed = speed + kalAccX * dt;
+  distR = distR + speedR * dt;
+  dist = dist + speed * dt;
   /*
     Serial.print("RawPitch:");
     Serial.print(currentAttitude.pitch);
@@ -89,18 +100,18 @@ void loop() {
     Serial.print("KRoll:");
     Serial.print(kalAngleY);
   */
-
   /*
-    Serial.print("gyroPitch:");
-    Serial.print(currentAttitude.gyroPitch);
-    Serial.print(",");
-    Serial.print("gyroRoll:");
-    Serial.print(currentAttitude.gyroRoll);
-    Serial.print(",");
-    Serial.print("gyroYaw:");
-    Serial.print(currentAttitude.gyroYaw);
-    */
+  Serial.print("RawACCl:");
+  Serial.print(currentAttitude.AccX);
+  Serial.print(",");
+  Serial.print("KAccl:");
+  Serial.print(kalAccX);
+  Serial.print(",");
+   */
+
   Serial.println("");
-  delay(50);
+  currentAttitude = getGyroData(0);
+  //getHeading(currentAttitude);
+  delay(5000);
 
 }
