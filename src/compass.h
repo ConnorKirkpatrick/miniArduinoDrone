@@ -1,15 +1,59 @@
 #include "Adafruit_HMC5883_U.h"
 Adafruit_HMC5883_Unified mag = Adafruit_HMC5883_Unified(12345);
-
+double offsetX, offsetY, offsetZ;
 void startCompass(){
-  Serial.println("Starting Compass");
   if(!mag.begin())
   {
     /* There was a problem detecting the HMC5883 ... check your connections */
     Serial.println("No Compass detected ... Check your wiring!");
     while(1);
   }
+  Serial.println("Compass Ready");
 }
+
+void calibrateCompass(){
+  /* Get a new sensor event */
+  double maxX, maxY, maxZ;
+  double minX, minY, minZ;
+  int time = millis();
+  Serial.println("Calibrate the compass horizontally");
+  while(millis() < time + 7000){
+    //7 seconds to calibrate the horizontal
+    sensors_event_t event;
+    mag.getEvent(&event);
+    maxX = event.magnetic.x > maxX ? event.magnetic.x : maxX;
+    minX = event.magnetic.x < minX ? event.magnetic.x : minX;
+
+    maxY = event.magnetic.y > maxY ? event.magnetic.y : maxY;
+    minY = event.magnetic.y < minY ? event.magnetic.y : minY;
+
+    maxZ = event.magnetic.z > maxZ ? event.magnetic.z : maxZ;
+    minZ = event.magnetic.z < minZ ? event.magnetic.z : minZ;
+  }
+  Serial.println("Calibrate the compass Vertically");
+  time = millis();
+  while(millis() < time + 7000){
+    //7 seconds to calibrate the horizontal
+    sensors_event_t event;
+    mag.getEvent(&event);
+    maxX = event.magnetic.x > maxX ? event.magnetic.x : maxX;
+    minX = event.magnetic.x < minX ? event.magnetic.x : minX;
+
+    maxY = event.magnetic.y > maxY ? event.magnetic.y : maxY;
+    minY = event.magnetic.y < minY ? event.magnetic.y : minY;
+
+    maxZ = event.magnetic.z > maxZ ? event.magnetic.z : maxZ;
+    minZ = event.magnetic.z < minZ ? event.magnetic.z : minZ;
+  }
+  offsetX = maxX + minX;
+  offsetY = maxY + minY;
+  offsetZ = maxZ + minZ;
+  Serial.print("X: ");Serial.print(minX);Serial.print(" - ");Serial.print(maxX);Serial.print(" Offset: ");Serial.println(offsetX);
+  Serial.print("Y: ");Serial.print(minY);Serial.print(" - ");Serial.print(maxY);Serial.print(" Offset: ");Serial.println(offsetY);
+  Serial.print("Z: ");Serial.print(minZ);Serial.print(" - ");Serial.print(maxZ);Serial.print(" Offset: ");Serial.println(offsetZ);
+
+}
+
 float getHeading(attitude currentAttitude){
   /* Get a new sensor event */
   sensors_event_t event;
